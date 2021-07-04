@@ -1,33 +1,53 @@
 // Git repository: <https://github.com/davidhs/asexp-ts>
 
-type Token = { v: string, li: number, ci: number };
+/**
+ * 
+ */
+export type Token = {
+  lexeme: string,
+  index: number,
+  length: number,
+  lineIndex: number,
+  columnIndex: number
+};
 
-type ASExpressionAtom = string;
-type ASExpressionList = ASExpression[];
-type ASExpression = ASExpressionAtom | ASExpressionList;
+export type ASExpressionAtom = string;
+export type ASExpressionList = ASExpression[];
+export type ASExpression = ASExpressionAtom | ASExpressionList;
 
 const ws = /\s/;
 
-// TODO(Davíð): maybe replace with enum?
 const STATE_NORMAL = 1;
 const STATE_COMMENT = 2;
 const STATE_STRING = 3;
+
+type TokenizationState 
+  = typeof STATE_NORMAL
+  | typeof STATE_COMMENT
+  | typeof STATE_STRING
+  ;
 
 
 /**
  * Create error message
  * 
- * @param text
+ * @param code
  * @param token
  * @param message
  */
-function cem(text: string, token: Token | null, message = "") {
-  if (token === null) return message;
+function createErrorMessage(code: string, token: Token | null, message = "") {
+  // NOTE(Davíð): it's OK that this code is not performant.  This code doesn't run often,
+  //              and should cause an error if invoked.
+  
+  if (token === null) {
+    return message;
+  }
 
-  const line_index = token.li;
-  const column_index = token.ci;
+  const line_index = token.lineIndex;
+  const column_index = token.columnIndex;
 
-  const lines = text.split("\n");
+  // TODO: is "\n" the only symbol of new line?
+  const lines = code.split("\n");
 
   const line = lines[line_index];
 
@@ -54,108 +74,197 @@ function cem(text: string, token: Token | null, message = "") {
 }
 
 /**
+ * Creates a new token
  * 
- * @param line_index 
- * @param column_index 
+ * @param code 
+ * @param token_code_index 
+ * @param token_length 
+ * @param token_line_index 
+ * @param token_column_index 
+ * @returns 
  */
-function create_new_token(line_index: number, column_index: number): Token {
-  return { v: "", li: line_index, ci: column_index }
+function createToken(
+  code: string,
+  token_code_index: number,
+  token_length: number,
+  token_line_index: number,
+  token_column_index: number
+): Token {
+  const token: Token = {
+    lexeme: code.substring(token_code_index, token_code_index + token_length),
+    index: token_code_index,
+    length: token_length,
+    lineIndex: token_line_index,
+    columnIndex: token_column_index,
+  };
+  
+  return token;
 }
+
 
 /**
  * 
- * @param text 
+ * @param code 
  * 
  * @throws
  */
-function tokenize(text: string): Token[] {
+function tokenize(code: string): Token[] {
+  const code_length = code.length;
+  
+  let code_index = 0;
+  let code_line_index = 0;
+  let code_column_index = 0;
+  
   const tokens: Token[] = [];
 
-  let token: null | Token = null;
+  let token_index = -1;
+  let token_length = -1;
+  let token_line_index = -1;
+  let token_column_index = -1;
+  
+  /**
+   * Starts a new empty token.
+   * 
+   * @param index 
+   * @param length 
+   * @param lineIndex 
+   * @param columnIndex 
+   */
+  function startToken(): void {
+    token_index = code_index;
+    token_length = 0;
+    token_line_index = code_line_index;
+    token_column_index = code_column_index;
+  }
+  
+  /**
+   * Extend current token to include next character
+   */
+  function extendToken(): void {
+    token_length += 1;
+  }
+  
+  /**
+   * Check if we're currently working on a token.
+   * 
+   * @returns 
+   */
+  function hasToken(): boolean {
+    return token_index >= 0;
+  }
+  
+  /**
+   * "Flush" to create a token and return the token.  Data
+   * about creating a token is reset.
+   * 
+   * @returns 
+   */
+  function flushToken(): Token {
+    const token = createToken(
+      code,
+      token_index,
+      token_length,
+      token_line_index,
+      token_column_index
+    );
+    
+    // Reset token
+    token_index = -1;
+    token_length = -1;
+    token_line_index = -1;
+    token_column_index = -1;
+    
+    return token;
+  }
 
-  const text_length = text.length;
+  let state: TokenizationState = STATE_NORMAL;
 
-  let token_line_index = 0;
-  let token_column_index = 0;
+  let pc = ""; // Previous character.
+  let cc = ""; // Current character.
 
-  let line_index = 0;
-  let column_index = 0;
-
-  let state = STATE_NORMAL;
-
-  let pc = "";
-  let c = "";
-
-  for (let text_index = 0; text_index < text_length; text_index += 1) {
-    c = text[text_index];
+  while (code_index < code_length) {
+    cc = code[code_index];
 
     if (state === STATE_NORMAL) {
-      if (c === ";") {
-        if (token !== null) {
-          tokens.push(token);
-          token = null;
+      if (cc === ";") {
+        if (hasToken()) {
+          tokens.push(flushToken());
         }
 
         state = STATE_COMMENT;
-      } else if (c.match(ws) !== null) {
-        if (token !== null) {
-          tokens.push(token);
-          token = null;
+      } else if (cc.match(ws) !== null) {
+        if (hasToken()) {
+          tokens.push(flushToken());
         }
-      } else if (c === "(" || c === ")") {
-        if (token !== null) {
-          tokens.push(token);
-          token = null;
+      } else if (cc === "(" || cc === ")") {
+        if (hasToken()) {
+          tokens.push(flushToken());
         }
-
-        {
-          const token = create_new_token(line_index, column_index);
-          token.v += c;
-
-          tokens.push(token);
+        
+        // Start a new token for delimiter and flush it.
+        startToken();
+        extendToken();
+        
+        tokens.push(flushToken());
+      } else if (cc === "\"") {
+        if (hasToken()) {
+          tokens.push(flushToken());
         }
-      } else if (c === "\"") {
-        token_line_index = line_index;
-        token_column_index = column_index;
-
-        if (token !== null) {
-          tokens.push(token);
-          token = null;
-        }
-
-        token = create_new_token(line_index, column_index);
-        token.v += c;
+        
+        startToken();
+        extendToken();
 
         state = STATE_STRING;
       } else {
-        if (token === null) token = create_new_token(line_index, column_index);
-        token.v += c;
+        if (!hasToken()) {
+          // Start new token
+          startToken();
+        }
+        
+        extendToken();
       }
     } else if (state === STATE_COMMENT) {
-      if (c === "\n") state = STATE_NORMAL;
-    } else if (state === STATE_STRING) {
-      (token as Token).v += c;
-
-      if (pc !== "\\" && c === "\"") {
-        tokens.push(token as Token);
-        token = null;
+      if (cc === "\n") {
         state = STATE_NORMAL;
       }
-    } else throw new Error(cem(text, token, `Internal error: unknown state: ${state}`));
+    } else if (state === STATE_STRING) {
+      extendToken();
+      
+      if (pc !== "\\" && cc === "\"") {
+        tokens.push(flushToken());
+        
+        state = STATE_NORMAL;
+      }
+    }
 
-    if (c === "\n") {
-      line_index += 1;
-      column_index = 0;
-    } else column_index += 1;
+    // Update column and line index.
+    if (cc === "\n") {
+      code_line_index += 1;
+      code_column_index = 0;
+    } else {
+      code_column_index += 1;
+    }
 
-    pc = c;
+    // Have previous copy current character to compare in
+    // next iteration.
+    pc = cc;
+    
+    code_index += 1;
   }
 
-  if (token !== null) {
-    if (state === STATE_STRING) throw new SyntaxError(cem(text, token, `unclosed string`));
+  if (hasToken()) {
+    if (state === STATE_STRING) {
+      // If we're in a partial string, throw error.
+      throw new SyntaxError(
+        createErrorMessage(
+          code,
+          flushToken(),
+          `unclosed string`
+        ));
+    }
     else {
-      tokens.push(token);
-      token = null;
+      // If we're add end of code, add token to tokens.
+      tokens.push(flushToken());
     }
   }
 
@@ -164,34 +273,109 @@ function tokenize(text: string): Token[] {
 
 
 /**
+ * Parses code into a list of abbreviated s-expressions.
  * 
- * @param text 
+ * @param code 
  * @throws
  */
-export function parse(text: string): ASExpressionList {
-  const tokens = tokenize(text);
+export function parse(code: string): ASExpressionList {
+  const tokens = tokenize(code);
   
+  // We use this stack when we're constructing the parse tree.
   const stack: ASExpression[][] = [[]];
 
   const list_delim_stack: Token[] = [];
-
-  for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i];
-
-    if (token.v === "(") {
+  
+  for (const token of tokens) {
+    if (token.lexeme === "(") {
       list_delim_stack.push(token);
       stack.push([]);
-    } else if (token.v === ")") {
-      if (stack.length === 1) throw new SyntaxError(cem(text, token, `unexpected closing delimiter`))
+    } else if (token.lexeme === ")") {
+      if (stack.length === 1) {
+        throw new SyntaxError(
+          createErrorMessage(
+            code,
+            token,
+            `unexpected closing delimiter`
+          )
+        );
+      }
+      
       list_delim_stack.pop();
       const level = stack.pop() as ASExpressionList;
       stack[stack.length - 1].push(level);
-    } else stack[stack.length - 1].push(token.v);
+    } else {
+      stack[stack.length - 1].push(token.lexeme);
+    }
   }
 
-  if (stack.length !== 1) throw new SyntaxError(cem(text, list_delim_stack[list_delim_stack.length - 1], `needs a matching closing delimiter`));
+  if (stack.length !== 1) {
+    throw new SyntaxError(
+      createErrorMessage(
+        code,
+        list_delim_stack[list_delim_stack.length - 1],
+        `needs a matching closing delimiter`
+      )
+    );
+  }
   
   const as_expressions: ASExpressionList = stack.pop() as ASExpressionList;
 
   return as_expressions;
+}
+
+export function test() {
+  function assert(condition: unknown, message = ""): asserts condition {
+    if (!condition) {
+      throw new Error(`Assertion failed: ${message}`);
+    }
+  }
+  
+  /**
+   * 
+   * @param fn 
+   */
+  function wrapFnExpectError(fn: () => void) {
+    return () => {
+      let ok = true;
+      try {
+        fn();
+        ok = false;
+      } catch (e) {}
+      
+      if (!ok) {
+        throw new Error(`Error`);
+      }
+    };
+  }
+  
+  const tests = [
+    // Test unclosed string
+    wrapFnExpectError(() => {
+      tokenize(String.raw`"abc`);
+    }),
+    // Test unexpected closing delimiter
+    wrapFnExpectError(() => {
+      parse(")");
+    }),
+    // Test needs a matching closing delimiter
+    wrapFnExpectError(() => {
+      parse("(");
+    }),
+    
+    // TODO: write more tests
+  ];
+  
+  const n = tests.length;
+  
+  for (let i = 0; i < n; i += 1) {
+    const test = tests[i];
+    
+    try {
+      test();
+      console.info(`Success (${i + 1} of ${n})`);
+    } catch (e) {
+      console.info(`Error (${i + 1} of ${n}):`, e);
+    }
+  }
 }
