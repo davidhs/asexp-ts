@@ -1,30 +1,57 @@
 // Git repository: <https://github.com/davidhs/asexp-ts>
 
+
+export const TOKEN_TYPE_SYMBOL = 0;
+export const TOKEN_TYPE_COMMENT = 1;
+export const TOKEN_TYPE_STRING = 2;
+export const TOKEN_TYPE_DELIM = 3;
+export const TOKEN_TYPE_WS = 3;
+
+
+export type TokenType
+  = typeof TOKEN_TYPE_SYMBOL
+  | typeof TOKEN_TYPE_COMMENT
+  | typeof TOKEN_TYPE_STRING
+  | typeof TOKEN_TYPE_DELIM
+  ;
+
 /**
  * 
  */
 export type Token = {
   lexeme: string,
+  type: TokenType,
   index: number,
   length: number,
   lineIndex: number,
   columnIndex: number
 };
 
-export type ASExpressionAtom = string;
+export type ASExpressionAtom = Token;
 export type ASExpressionList = ASExpression[];
 export type ASExpression = ASExpressionAtom | ASExpressionList;
 
-const ws = /\s/;
+export type TokenizeOptions = { whitespace?: boolean, comment?: boolean };
+export type ParseOptions = {
+  whitespace?: boolean,
+  comment?: boolean,
+  delimiter?: boolean
+};
 
-const STATE_NORMAL = 1;
+
+
+const regex_ws = /\s/;
+
+const STATE_NEW = 1;
 const STATE_COMMENT = 2;
 const STATE_STRING = 3;
+const STATE_WS = 4;
 
 type TokenizationState 
-  = typeof STATE_NORMAL
+  = typeof STATE_NEW
   | typeof STATE_COMMENT
   | typeof STATE_STRING
+  | typeof STATE_WS
   ;
 
 
@@ -74,31 +101,65 @@ function createErrorMessage(code: string, token: Token | null, message = "") {
 }
 
 /**
- * Creates a new token
  * 
  * @param code 
- * @param token_code_index 
- * @param token_length 
- * @param token_line_index 
- * @param token_column_index 
- * @returns 
+ * @param index 
  */
-function createToken(
-  code: string,
-  token_code_index: number,
-  token_length: number,
-  token_line_index: number,
-  token_column_index: number
-): Token {
-  const token: Token = {
-    lexeme: code.substring(token_code_index, token_code_index + token_length),
-    index: token_code_index,
-    length: token_length,
-    lineIndex: token_line_index,
-    columnIndex: token_column_index,
-  };
+function getLineAndColumnIndexInCode(code: string, index: number) {
+  let lineIndex = 0;
+  let columnIndex = 0;
   
-  return token;
+  
+  for (let i = 0; i < code.length; i += 1) {
+    const c = code[i];
+    
+    if (c === "\n") {
+      lineIndex += 1;
+      columnIndex = 0;
+    } else {
+      columnIndex += 1;
+    }
+    
+    if (i === index) {
+      break;
+    }
+  }
+  
+  return { lineIndex, columnIndex };
+}
+
+/**
+ * 
+ * @param code 
+ * @param index 
+ */
+function pointInCode(code: string, index: number) {
+  const { lineIndex, columnIndex } = getLineAndColumnIndexInCode(code, index);
+
+  const lines = code.split("\n");
+
+  const line = lines[lineIndex];
+
+  const msg: string[] = [];
+
+  const line_number = lineIndex + 1;
+
+  const sub_gutter_1 = `${line_number}`;
+  const gutter_1 = ` ${sub_gutter_1} | `;
+
+  const sub_gutter_2 = " ".repeat(sub_gutter_1.length);
+  const gutter_2 = ` ${sub_gutter_2} | `;
+
+  msg.push(`\n`);
+  msg.push(`\n`);
+  msg.push(`${gutter_1}${line}`);
+  msg.push(`\n`);
+  msg.push(`${gutter_2}${" ".repeat(columnIndex)}^`);
+  //msg.push(`\n`);
+  //msg.push(`${gutter_2}${" ".repeat(column_index)}'- ${message}`);
+  msg.push(`\n`);
+
+  return msg.join("");
 }
 
 
@@ -108,7 +169,7 @@ function createToken(
  * 
  * @throws
  */
-function tokenize(code: string): Token[] {
+export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
   const code_length = code.length;
   
   let code_index = 0;
@@ -117,21 +178,51 @@ function tokenize(code: string): Token[] {
   
   const tokens: Token[] = [];
 
+  let token_type: TokenType = TOKEN_TYPE_COMMENT;
   let token_index = -1;
   let token_length = -1;
   let token_line_index = -1;
   let token_column_index = -1;
+
+  let state: TokenizationState = STATE_NEW;
+  
+  let pc = ""; // Previous character.
+  let cc = ""; // Current character.
+  
+  let deciding = true; // Whether through "state machine".
+  
+  let includeWhitespace = false;
+  let includeComment = false;
+  
+  if (options.whitespace === true) includeWhitespace = true;
+  if (options.comment === true) includeComment = true;
   
   /**
-   * Starts a new empty token.
+   * Creates a new token from the work-in-progress token.
    * 
-   * @param index 
-   * @param length 
-   * @param lineIndex 
-   * @param columnIndex 
+   * @returns 
    */
-  function startToken(): void {
+  function createToken(): Token {
+    const token: Token = {
+      lexeme: code.substring(token_index, token_index + token_length),
+      type: token_type,
+      index: token_index,
+      length: token_length,
+      lineIndex: token_line_index,
+      columnIndex: token_column_index,
+    };
+    
+    return token;
+  }
+  
+  /**
+   * Starts a new empty work-in-progress token.
+   * 
+   * @param type 
+   */
+  function startToken(type: TokenType): void {
     token_index = code_index;
+    token_type = type;
     token_length = 0;
     token_line_index = code_line_index;
     token_column_index = code_column_index;
@@ -145,7 +236,7 @@ function tokenize(code: string): Token[] {
   }
   
   /**
-   * Check if we're currently working on a token.
+   * Check if we're currently working on a work-in-progress token.
    * 
    * @returns 
    */
@@ -154,86 +245,161 @@ function tokenize(code: string): Token[] {
   }
   
   /**
-   * "Flush" to create a token and return the token.  Data
-   * about creating a token is reset.
-   * 
-   * @returns 
+   * Resets the current work-in-progress token.
    */
-  function flushToken(): Token {
-    const token = createToken(
-      code,
-      token_index,
-      token_length,
-      token_line_index,
-      token_column_index
-    );
-    
-    // Reset token
+  function resetToken(): void {
+    token_type = TOKEN_TYPE_COMMENT;
     token_index = -1;
     token_length = -1;
     token_line_index = -1;
     token_column_index = -1;
+  }
+  
+  /**
+   * Completes the work-in-progress token.  A token is created and returned
+   * and the work-in-progress token is reset.  
+   * 
+   * @returns 
+   */
+  function completeToken(): Token {
+    const token = createToken();
+    
+    resetToken();
     
     return token;
   }
+  
+  /**
+   * Completes a token, pushes onto the token stack, and returns the
+   * token.
+   * 
+   * @returns 
+   */
+  function flushToken(): Token {
+    const token = completeToken();
+    
+    if (token.type === TOKEN_TYPE_WS) {
+      if (includeWhitespace) tokens.push(token);
+    } 
+    else if (token.type === TOKEN_TYPE_COMMENT) {
+      if (includeComment) tokens.push(token);
+    } else {
+      tokens.push(token);
+    }
+    
+    return token;
+  }
+  
+  /**
+   * Set the state of the state machine.
+   * 
+   * @param nextState 
+   */
+  function setNextState(nextState: TokenizationState) {
+    state = nextState;
+  }
+  
+  /**
+   * Conclude decision on what to do given the character
+   * that we've just seen and continue.
+   */
+  function conclude() {
+    deciding = false;
+  }
+  
+  /**
+   * Checks if character is whitespace
+   * 
+   * @param c 
+   */
+  function isWhitespace(c: string) {
+    return c.match(regex_ws) !== null;
+  }
 
-  let state: TokenizationState = STATE_NORMAL;
-
-  let pc = ""; // Previous character.
-  let cc = ""; // Current character.
-
+  // Walk over code
   while (code_index < code_length) {
     cc = code[code_index];
-
-    if (state === STATE_NORMAL) {
-      if (cc === ";") {
-        if (hasToken()) {
-          tokens.push(flushToken());
-        }
-
-        state = STATE_COMMENT;
-      } else if (cc.match(ws) !== null) {
-        if (hasToken()) {
-          tokens.push(flushToken());
-        }
-      } else if (cc === "(" || cc === ")") {
-        if (hasToken()) {
-          tokens.push(flushToken());
-        }
-        
-        // Start a new token for delimiter and flush it.
-        startToken();
-        extendToken();
-        
-        tokens.push(flushToken());
-      } else if (cc === "\"") {
-        if (hasToken()) {
-          tokens.push(flushToken());
-        }
-        
-        startToken();
-        extendToken();
-
-        state = STATE_STRING;
-      } else {
-        if (!hasToken()) {
-          // Start new token
-          startToken();
-        }
-        
-        extendToken();
-      }
-    } else if (state === STATE_COMMENT) {
-      if (cc === "\n") {
-        state = STATE_NORMAL;
-      }
-    } else if (state === STATE_STRING) {
-      extendToken();
+    
+    // Decide what action to do or what state to transition to.
+    deciding = true;
+    
+    // Loop while we're deciding.
+    while (deciding) {
+      switch (state as TokenizationState) {
+        case STATE_NEW:
+          // Comment
+          if (cc === ";") {
+            if (hasToken()) flushToken();
+            startToken(TOKEN_TYPE_COMMENT);
+            extendToken();
+            setNextState(STATE_COMMENT);
+            conclude();
+          }
+          // Whitespace
+          else if (isWhitespace(cc)) {
+            if (hasToken()) flushToken();
+            startToken(TOKEN_TYPE_WS);
+            extendToken();
+            setNextState(STATE_WS);
+            conclude();
+          }
+          // Delimiter
+          else if (cc === "(" || cc === ")") {
+            if (hasToken()) flushToken();
+            startToken(TOKEN_TYPE_DELIM);
+            extendToken();
+            flushToken();
+            conclude();
+          }
+          // String
+          else if (cc === "\"") {
+            if (hasToken()) flushToken();
+            startToken(TOKEN_TYPE_STRING);
+            extendToken();
+            setNextState(STATE_STRING);
+            conclude();
+          }
+          // Symbol
+          else {
+            if (!hasToken()) startToken(TOKEN_TYPE_SYMBOL);
+            extendToken();
+            conclude();
+          }
+          
+          break;
+        case STATE_COMMENT:
+          extendToken();
+          conclude();
+          
+          if (cc === "\n") {
+            flushToken();
+            setNextState(STATE_NEW);
+          }
+          
+          break;
+        case STATE_STRING:
+          extendToken();
       
-      if (pc !== "\\" && cc === "\"") {
-        tokens.push(flushToken());
-        
-        state = STATE_NORMAL;
+          if (pc !== "\\" && cc === "\"") {
+            flushToken();
+            setNextState(STATE_NEW);
+          }
+          
+          conclude();
+          
+          break;
+        case STATE_WS:
+          if (isWhitespace(cc)) {
+            extendToken();
+            conclude();
+          } else {
+            flushToken();
+            setNextState(STATE_NEW);
+          }
+          
+          break;
+        default:
+          throw new Error("Should not happen.");
       }
     }
 
@@ -249,28 +415,30 @@ function tokenize(code: string): Token[] {
     // next iteration.
     pc = cc;
     
+    // Increment
     code_index += 1;
   }
 
+  // See if we have a work-in-progress token that we need to deal with.
+  
   if (hasToken()) {
-    if (state === STATE_STRING) {
+    if ((state as TokenizationState) === STATE_STRING) {
       // If we're in a partial string, throw error.
       throw new SyntaxError(
         createErrorMessage(
           code,
-          flushToken(),
+          completeToken(),
           `unclosed string`
         ));
     }
     else {
       // If we're add end of code, add token to tokens.
-      tokens.push(flushToken());
+      flushToken();
     }
   }
 
   return tokens;
 }
-
 
 /**
  * Parses code into a list of abbreviated s-expressions.
@@ -278,8 +446,16 @@ function tokenize(code: string): Token[] {
  * @param code 
  * @throws
  */
-export function parse(code: string): ASExpressionList {
-  const tokens = tokenize(code);
+export function parse(code: string, options: ParseOptions = {}): ASExpressionList {
+  let includeWhitespace = false;
+  let includeComment = false;
+  let includeDelimiter = false;
+  
+  if (options.whitespace === true) includeWhitespace = true;
+  if (options.comment === true) includeComment = true;
+  if (options.delimiter === true) includeDelimiter = true;
+  
+  const tokens = tokenize(code, { whitespace: includeWhitespace, comment: includeComment });
   
   // We use this stack when we're constructing the parse tree.
   const stack: ASExpression[][] = [[]];
@@ -290,6 +466,7 @@ export function parse(code: string): ASExpressionList {
     if (token.lexeme === "(") {
       list_delim_stack.push(token);
       stack.push([]);
+      if (includeDelimiter) stack[stack.length - 1].push(token);
     } else if (token.lexeme === ")") {
       if (stack.length === 1) {
         throw new SyntaxError(
@@ -301,11 +478,13 @@ export function parse(code: string): ASExpressionList {
         );
       }
       
+      if (includeDelimiter) stack[stack.length - 1].push(token);
+      
       list_delim_stack.pop();
       const level = stack.pop() as ASExpressionList;
       stack[stack.length - 1].push(level);
     } else {
-      stack[stack.length - 1].push(token.lexeme);
+      stack[stack.length - 1].push(token);
     }
   }
 
@@ -350,19 +529,63 @@ export function test() {
   }
   
   const tests = [
+    () => {
+      const t = tokenize("()");
+      
+      console.info(t);
+    },
     // Test unclosed string
     wrapFnExpectError(() => {
       tokenize(String.raw`"abc`);
     }),
     // Test unexpected closing delimiter
     wrapFnExpectError(() => {
+      console.info("START");
       parse(")");
+      console.info("STOP");
     }),
     // Test needs a matching closing delimiter
     wrapFnExpectError(() => {
       parse("(");
     }),
-    
+    // Nesting test
+    () => {
+      const code = String.raw`
+        a b
+        ( c d )
+        e f
+      `;
+      
+      const p: any = parse(code);
+      
+      assert(p.length === 5);
+      assert(Array.isArray(p[2]));
+      assert(p[2].length === 2);
+      
+      assert(p[0].lexeme === "a");
+      assert(p[1].lexeme === "b");
+      assert(p[2][0].lexeme === "c");
+      assert(p[2][1].lexeme === "d");
+      assert(p[3].lexeme === "e");
+      assert(p[4].lexeme === "f");
+    },
+    // all test
+    () => {
+      const code = String.raw`
+        1; hello
+        2 ;"world
+        3
+      `;
+      
+      const p: any = parse(code);
+      
+      console.info(p);
+      
+      assert(p.length === 3);
+      assert(p[0].lexeme === "1");
+      assert(p[1].lexeme === "2");
+      assert(p[2].lexeme === "3");
+    },
     // TODO: write more tests
   ];
   
