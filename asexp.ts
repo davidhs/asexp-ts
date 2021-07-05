@@ -1,46 +1,47 @@
 // Git repository: <https://github.com/davidhs/asexp-ts>
 
-export type NodeTypeLeaf = 0 | 1 | 2 | 3 | 4;
-export type NodeTypeList = 5;
-export type NodeType = NodeTypeLeaf | NodeTypeList;
+export type ParseNodeTypeLeaf = 0 | 1 | 2 | 3 | 4;
+export type ParseNodeTypeBranch = 5;
+export type ParseNodeType = ParseNodeTypeLeaf | ParseNodeTypeBranch;
 
-export type Token = {
-  type: NodeTypeLeaf,
-  lexeme: string,
+
+// TODO: I don't know whether or not to export this.
+export type ParseNodeCommon = {
   index: number,
   length: number,
   lineIndex: number,
   columnIndex: number
 };
 
-// export type ASExpressionAtom = Token;
-// export type ASExpressionList = ASExpression[];
-// export type ASExpression = ASExpressionAtom | ASExpressionList;
+/**
+ * A.k.a. token.
+ */
+export type ParseNodeLeaf = ParseNodeCommon & {
+  type: ParseNodeTypeLeaf,
+  value: string,
+};
 
-export type ParseNodeAtom = Token;
-export type ParseNodeList = {
-  type: 5,
-  list: ParseNode[],
-}
-export type ParseNode = ParseNodeAtom | ParseNodeList;
+export type ParseNodeBranch = ParseNodeCommon & {
+  type: ParseNodeTypeBranch,
+  value: ParseNode[],
+};
+
+export type ParseNode = ParseNodeLeaf | ParseNodeBranch;
+
 
 export type TokenizeOptions = { whitespace?: boolean, comment?: boolean };
-export type ParseOptions = {
-  whitespace?: boolean,
-  comment?: boolean,
-  delimiter?: boolean
-};
+export type ParseOptions = { whitespace?: boolean, comment?: boolean, delimiter?: boolean };
+
 
 type TokenizationState = 1 | 2 | 3 | 4;
 
 
-
-export const NODE_TYPE_SYMBOL: NodeTypeLeaf = 0;
-export const NODE_TYPE_COMMENT: NodeTypeLeaf = 1;
-export const NODE_TYPE_STRING: NodeTypeLeaf = 2;
-export const NODE_TYPE_DELIM: NodeTypeLeaf = 3;
-export const NODE_TYPE_WS: NodeTypeLeaf = 4;
-export const NODE_TYPE_LIST: NodeTypeList = 5;
+export const NODE_TYPE_SYMBOL: ParseNodeTypeLeaf = 0;
+export const NODE_TYPE_COMMENT: ParseNodeTypeLeaf = 1;
+export const NODE_TYPE_STRING: ParseNodeTypeLeaf = 2;
+export const NODE_TYPE_DELIM: ParseNodeTypeLeaf = 3;
+export const NODE_TYPE_WS: ParseNodeTypeLeaf = 4;
+export const NODE_TYPE_LIST: ParseNodeTypeBranch = 5;
 
 const regex_ws = /\s/;
 
@@ -57,29 +58,24 @@ function assert(condition: unknown, message = ""): asserts condition {
 /**
  * Create error message
  * 
- * @param code
- * @param token
- * @param message
+ * @param code Code.
+ * @param index Index into `code`.
+ * @param message Associated error message.
  */
-function createErrorMessage(code: string, token: Token | null, message = "") {
+function createErrorMessage(code: string, index: number, message = "") {
   // NOTE(Davíð): it's OK that this code is not performant.  This code doesn't run often,
   //              and should cause an error if invoked.
   
-  if (token === null) {
-    return message;
-  }
-
-  const line_index = token.lineIndex;
-  const column_index = token.columnIndex;
+  const { lineIndex, columnIndex } = getLineAndColumnIndexInCode(code, index);
 
   // TODO: is "\n" the only symbol of new line?
   const lines = code.split("\n");
 
-  const line = lines[line_index];
+  const line = lines[lineIndex];
 
   const msg: string[] = [];
 
-  const line_number = line_index + 1;
+  const line_number = lineIndex + 1;
 
   const sub_gutter_1 = `${line_number}`;
   const gutter_1 = ` ${sub_gutter_1} | `;
@@ -91,9 +87,9 @@ function createErrorMessage(code: string, token: Token | null, message = "") {
   msg.push(`\n`);
   msg.push(`${gutter_1}${line}`);
   msg.push(`\n`);
-  msg.push(`${gutter_2}${" ".repeat(column_index)}^`);
+  msg.push(`${gutter_2}${" ".repeat(columnIndex)}^`);
   msg.push(`\n`);
-  msg.push(`${gutter_2}${" ".repeat(column_index)}'- ${message}`);
+  msg.push(`${gutter_2}${" ".repeat(columnIndex)}'- ${message}`);
   msg.push(`\n`);
 
   return msg.join("");
@@ -131,54 +127,19 @@ function getLineAndColumnIndexInCode(code: string, index: number) {
 /**
  * 
  * @param code 
- * @param index 
- */
-function pointInCode(code: string, index: number) {
-  const { lineIndex, columnIndex } = getLineAndColumnIndexInCode(code, index);
-
-  const lines = code.split("\n");
-
-  const line = lines[lineIndex];
-
-  const msg: string[] = [];
-
-  const line_number = lineIndex + 1;
-
-  const sub_gutter_1 = `${line_number}`;
-  const gutter_1 = ` ${sub_gutter_1} | `;
-
-  const sub_gutter_2 = " ".repeat(sub_gutter_1.length);
-  const gutter_2 = ` ${sub_gutter_2} | `;
-
-  msg.push(`\n`);
-  msg.push(`\n`);
-  msg.push(`${gutter_1}${line}`);
-  msg.push(`\n`);
-  msg.push(`${gutter_2}${" ".repeat(columnIndex)}^`);
-  //msg.push(`\n`);
-  //msg.push(`${gutter_2}${" ".repeat(column_index)}'- ${message}`);
-  msg.push(`\n`);
-
-  return msg.join("");
-}
-
-
-/**
- * 
- * @param code 
  * 
  * @throws
  */
-export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
+export function tokenize(code: string, options: TokenizeOptions = {}): ParseNodeLeaf[] {
   const code_length = code.length;
   
   let code_index = 0;
   let code_line_index = 0;
   let code_column_index = 0;
   
-  const tokens: Token[] = [];
+  const tokens: ParseNodeLeaf[] = [];
 
-  let token_type: NodeTypeLeaf = NODE_TYPE_COMMENT;
+  let token_type: ParseNodeTypeLeaf = NODE_TYPE_COMMENT;
   let token_index = -1;
   let token_length = -1;
   let token_line_index = -1;
@@ -202,9 +163,9 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
    * 
    * @returns 
    */
-  function createToken(): Token {
-    const token: Token = {
-      lexeme: code.substring(token_index, token_index + token_length),
+  function createToken(): ParseNodeLeaf {
+    const token: ParseNodeLeaf = {
+      value: code.substring(token_index, token_index + token_length),
       type: token_type,
       index: token_index,
       length: token_length,
@@ -220,7 +181,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
    * 
    * @param type 
    */
-  function startToken(type: NodeTypeLeaf): void {
+  function startToken(type: ParseNodeTypeLeaf): void {
     token_index = code_index;
     token_type = type;
     token_length = 0;
@@ -261,7 +222,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
    * 
    * @returns 
    */
-  function completeToken(): Token {
+  function completeToken(): ParseNodeLeaf {
     const token = createToken();
     
     resetToken();
@@ -275,7 +236,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
    * 
    * @returns 
    */
-  function flushToken(): Token {
+  function flushToken(): ParseNodeLeaf {
     const token = completeToken();
     
     if (token.type === NODE_TYPE_WS) {
@@ -427,7 +388,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
       throw new SyntaxError(
         createErrorMessage(
           code,
-          completeToken(),
+          token_index,
           `unclosed string`
         ));
     }
@@ -459,22 +420,35 @@ export function parse(code: string, options: ParseOptions = {}): ParseNode[] {
   
   // We use this stack when we're constructing the parse tree.
   const stack: ParseNode[][] = [[]];
+  
+  const stack_2: ParseNode[] = [];
 
   // To keep track of delimiters in case of error.
-  const list_delim_stack: Token[] = [];
+  const list_delim_stack: ParseNodeLeaf[] = [];
   
   for (const token of tokens) {
-    if (token.lexeme === "(") {
+    if (token.value === "(") {
       
       list_delim_stack.push(token);
       stack.push([]);
+      
+      stack_2.push({
+        type: NODE_TYPE_LIST,
+        value: [],
+        
+        index: token.index,
+        length: 0,
+        lineIndex: token.lineIndex,
+        columnIndex: token.columnIndex
+      });
+      
       if (includeDelimiter) stack[stack.length - 1].push(token);
-    } else if (token.lexeme === ")") {
+    } else if (token.value === ")") {
       if (stack.length === 1) {
         throw new SyntaxError(
           createErrorMessage(
             code,
-            token,
+            token.index,
             `unexpected closing delimiter`
           )
         );
@@ -489,21 +463,25 @@ export function parse(code: string, options: ParseOptions = {}): ParseNode[] {
       
       
       
-      const list: ParseNodeList = {
-        type: NODE_TYPE_LIST,
-        list: level
-      };
-      stack[stack.length - 1].push(list);
+      const parse_node = stack_2.pop();
+      
+      assert(typeof parse_node !== "undefined");
+      
+      parse_node.length = token.index - parse_node.index + 1;
+      parse_node.value = level;
+      
+      stack[stack.length - 1].push(parse_node);
     } else {
       stack[stack.length - 1].push(token);
     }
   }
 
   if (stack.length !== 1) {
+    const token = list_delim_stack[list_delim_stack.length - 1];
     throw new SyntaxError(
       createErrorMessage(
         code,
-        list_delim_stack[list_delim_stack.length - 1],
+        token.index,
         `needs a matching closing delimiter`
       )
     );
@@ -545,9 +523,9 @@ export function test() {
     () => {
       const t = tokenize("()");
       
-      assert(t[0].lexeme === "(");
+      assert(t[0].value === "(");
       assert(t[0].type === NODE_TYPE_DELIM);
-      assert(t[1].lexeme === ")");
+      assert(t[1].value === ")");
       assert(t[1].type === NODE_TYPE_DELIM);
     },
     // Test unclosed string
@@ -573,15 +551,15 @@ export function test() {
       const p: any = parse(code);
       
       assert(p.length === 5);
-      assert(Array.isArray(p[2].list));
-      assert(p[2].list.length === 2);
+      assert(Array.isArray(p[2].value));
+      assert(p[2].value.length === 2);
       
-      assert(p[0].lexeme === "a");
-      assert(p[1].lexeme === "b");
-      assert(p[2].list[0].lexeme === "c");
-      assert(p[2].list[1].lexeme === "d");
-      assert(p[3].lexeme === "e");
-      assert(p[4].lexeme === "f");
+      assert(p[0].value === "a");
+      assert(p[1].value === "b");
+      assert(p[2].value[0].value === "c");
+      assert(p[2].value[1].value === "d");
+      assert(p[3].value === "e");
+      assert(p[4].value === "f");
     },
     // all test
     () => {
@@ -594,9 +572,9 @@ export function test() {
       const p: any = parse(code);
       
       assert(p.length === 3);
-      assert(p[0].lexeme === "1");
-      assert(p[1].lexeme === "2");
-      assert(p[2].lexeme === "3");
+      assert(p[0].value === "1");
+      assert(p[1].value === "2");
+      assert(p[2].value === "3");
     },
     // TODO: write more tests
   ];
