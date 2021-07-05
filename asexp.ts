@@ -126,6 +126,11 @@ function getLineAndColumnIndexInCode(code: string, index: number) {
   return { lineIndex, columnIndex };
 }
 
+// TODO: add function that given code and index it will print out
+//       the code lines associated with that index and pointing
+//       to where the index lands.  This would be very useful when
+//       doing diagnostics with this module.
+
 /**
  * 
  * @param code 
