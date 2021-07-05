@@ -1,8 +1,8 @@
 // Git repository: <https://github.com/davidhs/asexp-ts>
 
-export type ParseNodeTypeLeaf = 0 | 1 | 2 | 3 | 4;
-export type ParseNodeTypeBranch = 5;
-export type ParseNodeType = ParseNodeTypeLeaf | ParseNodeTypeBranch;
+export type ParseNodeTypePrimitive = 0 | 1 | 2 | 3 | 4;
+export type ParseNodeTypeList = 5;
+export type ParseNodeType = ParseNodeTypePrimitive | ParseNodeTypeList;
 
 
 // TODO: I don't know whether or not to export this.
@@ -16,17 +16,27 @@ export type ParseNodeCommon = {
 /**
  * A.k.a. token.
  */
-export type ParseNodeLeaf = ParseNodeCommon & {
-  type: ParseNodeTypeLeaf,
+export type ParseNodePrimitive = {
+  type: ParseNodeTypePrimitive,
   value: string,
+  
+  index: number,
+  length: number,
+  lineIndex: number,
+  columnIndex: number
 };
 
-export type ParseNodeBranch = ParseNodeCommon & {
-  type: ParseNodeTypeBranch,
+export type ParseNodeList = {
+  type: ParseNodeTypeList,
   value: ParseNode[],
+  
+  index: number,
+  length: number,
+  lineIndex: number,
+  columnIndex: number
 };
 
-export type ParseNode = ParseNodeLeaf | ParseNodeBranch;
+export type ParseNode = ParseNodePrimitive | ParseNodeList;
 
 
 export type TokenizeOptions = { whitespace?: boolean, comment?: boolean };
@@ -36,12 +46,12 @@ export type ParseOptions = { whitespace?: boolean, comment?: boolean, delimiter?
 type TokenizationState = 1 | 2 | 3 | 4;
 
 
-export const NODE_TYPE_SYMBOL: ParseNodeTypeLeaf = 0;
-export const NODE_TYPE_COMMENT: ParseNodeTypeLeaf = 1;
-export const NODE_TYPE_STRING: ParseNodeTypeLeaf = 2;
-export const NODE_TYPE_DELIM: ParseNodeTypeLeaf = 3;
-export const NODE_TYPE_WS: ParseNodeTypeLeaf = 4;
-export const NODE_TYPE_LIST: ParseNodeTypeBranch = 5;
+export const PARSE_NODE_TYPE_SYMBOL: ParseNodeTypePrimitive = 0;
+export const PARSE_NODE_TYPE_COMMENT: ParseNodeTypePrimitive = 1;
+export const PARSE_NODE_TYPE_STRING: ParseNodeTypePrimitive = 2;
+export const PARSE_NODE_TYPE_DELIMITER: ParseNodeTypePrimitive = 3;
+export const PARSE_NODE_TYPE_WHITESPACE: ParseNodeTypePrimitive = 4;
+export const PARSE_NODE_TYPE_LIST: ParseNodeTypeList = 5;
 
 const regex_ws = /\s/;
 
@@ -130,16 +140,16 @@ function getLineAndColumnIndexInCode(code: string, index: number) {
  * 
  * @throws
  */
-export function tokenize(code: string, options: TokenizeOptions = {}): ParseNodeLeaf[] {
+export function tokenize(code: string, options: TokenizeOptions = {}): ParseNodePrimitive[] {
   const code_length = code.length;
   
   let code_index = 0;
   let code_line_index = 0;
   let code_column_index = 0;
   
-  const tokens: ParseNodeLeaf[] = [];
+  const tokens: ParseNodePrimitive[] = [];
 
-  let token_type: ParseNodeTypeLeaf = NODE_TYPE_COMMENT;
+  let token_type: ParseNodeTypePrimitive = PARSE_NODE_TYPE_COMMENT;
   let token_index = -1;
   let token_length = -1;
   let token_line_index = -1;
@@ -163,8 +173,8 @@ export function tokenize(code: string, options: TokenizeOptions = {}): ParseNode
    * 
    * @returns 
    */
-  function createToken(): ParseNodeLeaf {
-    const token: ParseNodeLeaf = {
+  function createToken(): ParseNodePrimitive {
+    const token: ParseNodePrimitive = {
       value: code.substring(token_index, token_index + token_length),
       type: token_type,
       index: token_index,
@@ -181,7 +191,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): ParseNode
    * 
    * @param type 
    */
-  function startToken(type: ParseNodeTypeLeaf): void {
+  function startToken(type: ParseNodeTypePrimitive): void {
     token_index = code_index;
     token_type = type;
     token_length = 0;
@@ -209,7 +219,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): ParseNode
    * Resets the current work-in-progress token.
    */
   function resetToken(): void {
-    token_type = NODE_TYPE_COMMENT;
+    token_type = PARSE_NODE_TYPE_COMMENT;
     token_index = -1;
     token_length = -1;
     token_line_index = -1;
@@ -222,7 +232,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): ParseNode
    * 
    * @returns 
    */
-  function completeToken(): ParseNodeLeaf {
+  function completeToken(): ParseNodePrimitive {
     const token = createToken();
     
     resetToken();
@@ -236,13 +246,13 @@ export function tokenize(code: string, options: TokenizeOptions = {}): ParseNode
    * 
    * @returns 
    */
-  function flushToken(): ParseNodeLeaf {
+  function flushToken(): ParseNodePrimitive {
     const token = completeToken();
     
-    if (token.type === NODE_TYPE_WS) {
+    if (token.type === PARSE_NODE_TYPE_WHITESPACE) {
       if (includeWhitespace) tokens.push(token);
     } 
-    else if (token.type === NODE_TYPE_COMMENT) {
+    else if (token.type === PARSE_NODE_TYPE_COMMENT) {
       if (includeComment) tokens.push(token);
     } else {
       tokens.push(token);
@@ -291,7 +301,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): ParseNode
           // Comment
           if (cc === ";") {
             if (hasToken()) flushToken();
-            startToken(NODE_TYPE_COMMENT);
+            startToken(PARSE_NODE_TYPE_COMMENT);
             extendToken();
             setNextState(STATE_COMMENT);
             conclude();
@@ -299,7 +309,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): ParseNode
           // Whitespace
           else if (isWhitespace(cc)) {
             if (hasToken()) flushToken();
-            startToken(NODE_TYPE_WS);
+            startToken(PARSE_NODE_TYPE_WHITESPACE);
             extendToken();
             setNextState(STATE_WS);
             conclude();
@@ -307,7 +317,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): ParseNode
           // Delimiter
           else if (cc === "(" || cc === ")") {
             if (hasToken()) flushToken();
-            startToken(NODE_TYPE_DELIM);
+            startToken(PARSE_NODE_TYPE_DELIMITER);
             extendToken();
             flushToken();
             conclude();
@@ -315,14 +325,14 @@ export function tokenize(code: string, options: TokenizeOptions = {}): ParseNode
           // String
           else if (cc === "\"") {
             if (hasToken()) flushToken();
-            startToken(NODE_TYPE_STRING);
+            startToken(PARSE_NODE_TYPE_STRING);
             extendToken();
             setNextState(STATE_STRING);
             conclude();
           }
           // Symbol
           else {
-            if (!hasToken()) startToken(NODE_TYPE_SYMBOL);
+            if (!hasToken()) startToken(PARSE_NODE_TYPE_SYMBOL);
             extendToken();
             conclude();
           }
@@ -424,7 +434,7 @@ export function parse(code: string, options: ParseOptions = {}): ParseNode[] {
   const stack_2: ParseNode[] = [];
 
   // To keep track of delimiters in case of error.
-  const list_delim_stack: ParseNodeLeaf[] = [];
+  const list_delim_stack: ParseNodePrimitive[] = [];
   
   for (const token of tokens) {
     if (token.value === "(") {
@@ -433,7 +443,7 @@ export function parse(code: string, options: ParseOptions = {}): ParseNode[] {
       stack.push([]);
       
       stack_2.push({
-        type: NODE_TYPE_LIST,
+        type: PARSE_NODE_TYPE_LIST,
         value: [],
         
         index: token.index,
@@ -524,9 +534,9 @@ export function test() {
       const t = tokenize("()");
       
       assert(t[0].value === "(");
-      assert(t[0].type === NODE_TYPE_DELIM);
+      assert(t[0].type === PARSE_NODE_TYPE_DELIMITER);
       assert(t[1].value === ")");
-      assert(t[1].type === NODE_TYPE_DELIM);
+      assert(t[1].type === PARSE_NODE_TYPE_DELIMITER);
     },
     // Test unclosed string
     wrapFnExpectError(() => {
