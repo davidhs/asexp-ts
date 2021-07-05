@@ -1,19 +1,28 @@
 // Git repository: <https://github.com/davidhs/asexp-ts>
 
-export type TokenType = 0 | 1 | 2 | 3 | 4;
+export type NodeTypeLeaf = 0 | 1 | 2 | 3 | 4;
+export type NodeTypeList = 5;
+export type NodeType = NodeTypeLeaf | NodeTypeList;
 
 export type Token = {
+  type: NodeTypeLeaf,
   lexeme: string,
-  type: TokenType,
   index: number,
   length: number,
   lineIndex: number,
   columnIndex: number
 };
 
-export type ASExpressionAtom = Token;
-export type ASExpressionList = ASExpression[];
-export type ASExpression = ASExpressionAtom | ASExpressionList;
+// export type ASExpressionAtom = Token;
+// export type ASExpressionList = ASExpression[];
+// export type ASExpression = ASExpressionAtom | ASExpressionList;
+
+export type ParseNodeAtom = Token;
+export type ParseNodeList = {
+  type: 5,
+  list: ParseNode[],
+}
+export type ParseNode = ParseNodeAtom | ParseNodeList;
 
 export type TokenizeOptions = { whitespace?: boolean, comment?: boolean };
 export type ParseOptions = {
@@ -24,11 +33,14 @@ export type ParseOptions = {
 
 type TokenizationState = 1 | 2 | 3 | 4;
 
-export const TOKEN_TYPE_SYMBOL: TokenType = 0;
-export const TOKEN_TYPE_COMMENT: TokenType = 1;
-export const TOKEN_TYPE_STRING: TokenType = 2;
-export const TOKEN_TYPE_DELIM: TokenType = 3;
-export const TOKEN_TYPE_WS: TokenType = 4;
+
+
+export const NODE_TYPE_SYMBOL: NodeTypeLeaf = 0;
+export const NODE_TYPE_COMMENT: NodeTypeLeaf = 1;
+export const NODE_TYPE_STRING: NodeTypeLeaf = 2;
+export const NODE_TYPE_DELIM: NodeTypeLeaf = 3;
+export const NODE_TYPE_WS: NodeTypeLeaf = 4;
+export const NODE_TYPE_LIST: NodeTypeList = 5;
 
 const regex_ws = /\s/;
 
@@ -37,6 +49,10 @@ const STATE_COMMENT: TokenizationState = 2;
 const STATE_STRING: TokenizationState = 3;
 const STATE_WS: TokenizationState = 4;
 
+
+function assert(condition: unknown, message = ""): asserts condition {
+  if (!condition) throw new Error(`Assertion failed: ${message}`);
+}
 
 /**
  * Create error message
@@ -162,7 +178,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
   
   const tokens: Token[] = [];
 
-  let token_type: TokenType = TOKEN_TYPE_COMMENT;
+  let token_type: NodeTypeLeaf = NODE_TYPE_COMMENT;
   let token_index = -1;
   let token_length = -1;
   let token_line_index = -1;
@@ -204,7 +220,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
    * 
    * @param type 
    */
-  function startToken(type: TokenType): void {
+  function startToken(type: NodeTypeLeaf): void {
     token_index = code_index;
     token_type = type;
     token_length = 0;
@@ -232,7 +248,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
    * Resets the current work-in-progress token.
    */
   function resetToken(): void {
-    token_type = TOKEN_TYPE_COMMENT;
+    token_type = NODE_TYPE_COMMENT;
     token_index = -1;
     token_length = -1;
     token_line_index = -1;
@@ -262,10 +278,10 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
   function flushToken(): Token {
     const token = completeToken();
     
-    if (token.type === TOKEN_TYPE_WS) {
+    if (token.type === NODE_TYPE_WS) {
       if (includeWhitespace) tokens.push(token);
     } 
-    else if (token.type === TOKEN_TYPE_COMMENT) {
+    else if (token.type === NODE_TYPE_COMMENT) {
       if (includeComment) tokens.push(token);
     } else {
       tokens.push(token);
@@ -314,7 +330,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
           // Comment
           if (cc === ";") {
             if (hasToken()) flushToken();
-            startToken(TOKEN_TYPE_COMMENT);
+            startToken(NODE_TYPE_COMMENT);
             extendToken();
             setNextState(STATE_COMMENT);
             conclude();
@@ -322,7 +338,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
           // Whitespace
           else if (isWhitespace(cc)) {
             if (hasToken()) flushToken();
-            startToken(TOKEN_TYPE_WS);
+            startToken(NODE_TYPE_WS);
             extendToken();
             setNextState(STATE_WS);
             conclude();
@@ -330,7 +346,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
           // Delimiter
           else if (cc === "(" || cc === ")") {
             if (hasToken()) flushToken();
-            startToken(TOKEN_TYPE_DELIM);
+            startToken(NODE_TYPE_DELIM);
             extendToken();
             flushToken();
             conclude();
@@ -338,14 +354,14 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
           // String
           else if (cc === "\"") {
             if (hasToken()) flushToken();
-            startToken(TOKEN_TYPE_STRING);
+            startToken(NODE_TYPE_STRING);
             extendToken();
             setNextState(STATE_STRING);
             conclude();
           }
           // Symbol
           else {
-            if (!hasToken()) startToken(TOKEN_TYPE_SYMBOL);
+            if (!hasToken()) startToken(NODE_TYPE_SYMBOL);
             extendToken();
             conclude();
           }
@@ -430,7 +446,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
  * @param code 
  * @throws
  */
-export function parse(code: string, options: ParseOptions = {}): ASExpressionList {
+export function parse(code: string, options: ParseOptions = {}): ParseNode[] {
   let includeWhitespace = false;
   let includeComment = false;
   let includeDelimiter = false;
@@ -442,12 +458,14 @@ export function parse(code: string, options: ParseOptions = {}): ASExpressionLis
   const tokens = tokenize(code, { whitespace: includeWhitespace, comment: includeComment });
   
   // We use this stack when we're constructing the parse tree.
-  const stack: ASExpression[][] = [[]];
+  const stack: ParseNode[][] = [[]];
 
+  // To keep track of delimiters in case of error.
   const list_delim_stack: Token[] = [];
   
   for (const token of tokens) {
     if (token.lexeme === "(") {
+      
       list_delim_stack.push(token);
       stack.push([]);
       if (includeDelimiter) stack[stack.length - 1].push(token);
@@ -465,8 +483,17 @@ export function parse(code: string, options: ParseOptions = {}): ASExpressionLis
       if (includeDelimiter) stack[stack.length - 1].push(token);
       
       list_delim_stack.pop();
-      const level = stack.pop() as ASExpressionList;
-      stack[stack.length - 1].push(level);
+      const level = stack.pop();
+      
+      assert(typeof level !== "undefined");
+      
+      
+      
+      const list: ParseNodeList = {
+        type: NODE_TYPE_LIST,
+        list: level
+      };
+      stack[stack.length - 1].push(list);
     } else {
       stack[stack.length - 1].push(token);
     }
@@ -482,9 +509,11 @@ export function parse(code: string, options: ParseOptions = {}): ASExpressionLis
     );
   }
   
-  const as_expressions: ASExpressionList = stack.pop() as ASExpressionList;
+  const parse_nodes = stack.pop();
+  
+  assert(typeof parse_nodes !== "undefined");
 
-  return as_expressions;
+  return parse_nodes;
 }
 
 export function test() {
@@ -517,9 +546,9 @@ export function test() {
       const t = tokenize("()");
       
       assert(t[0].lexeme === "(");
-      assert(t[0].type === TOKEN_TYPE_DELIM);
+      assert(t[0].type === NODE_TYPE_DELIM);
       assert(t[1].lexeme === ")");
-      assert(t[1].type === TOKEN_TYPE_DELIM);
+      assert(t[1].type === NODE_TYPE_DELIM);
     },
     // Test unclosed string
     wrapFnExpectError(() => {
@@ -544,13 +573,13 @@ export function test() {
       const p: any = parse(code);
       
       assert(p.length === 5);
-      assert(Array.isArray(p[2]));
-      assert(p[2].length === 2);
+      assert(Array.isArray(p[2].list));
+      assert(p[2].list.length === 2);
       
       assert(p[0].lexeme === "a");
       assert(p[1].lexeme === "b");
-      assert(p[2][0].lexeme === "c");
-      assert(p[2][1].lexeme === "d");
+      assert(p[2].list[0].lexeme === "c");
+      assert(p[2].list[1].lexeme === "d");
       assert(p[3].lexeme === "e");
       assert(p[4].lexeme === "f");
     },
