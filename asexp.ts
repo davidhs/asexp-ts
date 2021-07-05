@@ -5,14 +5,6 @@ export type ParseNodeTypeList = 5;
 export type ParseNodeType = ParseNodeTypePrimitive | ParseNodeTypeList;
 
 
-// TODO: I don't know whether or not to export this.
-export type ParseNodeCommon = {
-  index: number,
-  length: number,
-  lineIndex: number,
-  columnIndex: number
-};
-
 /**
  * A.k.a. token.
  */
