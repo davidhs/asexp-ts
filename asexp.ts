@@ -1,23 +1,7 @@
 // Git repository: <https://github.com/davidhs/asexp-ts>
 
+export type TokenType = 0 | 1 | 2 | 3 | 4;
 
-export const TOKEN_TYPE_SYMBOL = 0;
-export const TOKEN_TYPE_COMMENT = 1;
-export const TOKEN_TYPE_STRING = 2;
-export const TOKEN_TYPE_DELIM = 3;
-export const TOKEN_TYPE_WS = 3;
-
-
-export type TokenType
-  = typeof TOKEN_TYPE_SYMBOL
-  | typeof TOKEN_TYPE_COMMENT
-  | typeof TOKEN_TYPE_STRING
-  | typeof TOKEN_TYPE_DELIM
-  ;
-
-/**
- * 
- */
 export type Token = {
   lexeme: string,
   type: TokenType,
@@ -38,21 +22,20 @@ export type ParseOptions = {
   delimiter?: boolean
 };
 
+type TokenizationState = 1 | 2 | 3 | 4;
 
+export const TOKEN_TYPE_SYMBOL: TokenType = 0;
+export const TOKEN_TYPE_COMMENT: TokenType = 1;
+export const TOKEN_TYPE_STRING: TokenType = 2;
+export const TOKEN_TYPE_DELIM: TokenType = 3;
+export const TOKEN_TYPE_WS: TokenType = 4;
 
 const regex_ws = /\s/;
 
-const STATE_NEW = 1;
-const STATE_COMMENT = 2;
-const STATE_STRING = 3;
-const STATE_WS = 4;
-
-type TokenizationState 
-  = typeof STATE_NEW
-  | typeof STATE_COMMENT
-  | typeof STATE_STRING
-  | typeof STATE_WS
-  ;
+const STATE_NEW: TokenizationState = 1;
+const STATE_COMMENT: TokenizationState = 2;
+const STATE_STRING: TokenizationState = 3;
+const STATE_WS: TokenizationState = 4;
 
 
 /**
@@ -109,6 +92,7 @@ function getLineAndColumnIndexInCode(code: string, index: number) {
   let lineIndex = 0;
   let columnIndex = 0;
   
+  // TODO: optimize this code at some point.
   
   for (let i = 0; i < code.length; i += 1) {
     const c = code[i];
@@ -325,7 +309,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
     
     // Loop while we're deciding.
     while (deciding) {
-      switch (state as TokenizationState) {
+      switch (state) {
         case STATE_NEW:
           // Comment
           if (cc === ";") {
@@ -422,7 +406,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
   // See if we have a work-in-progress token that we need to deal with.
   
   if (hasToken()) {
-    if ((state as TokenizationState) === STATE_STRING) {
+    if (state === STATE_STRING) {
       // If we're in a partial string, throw error.
       throw new SyntaxError(
         createErrorMessage(
@@ -532,7 +516,10 @@ export function test() {
     () => {
       const t = tokenize("()");
       
-      console.info(t);
+      assert(t[0].lexeme === "(");
+      assert(t[0].type === TOKEN_TYPE_DELIM);
+      assert(t[1].lexeme === ")");
+      assert(t[1].type === TOKEN_TYPE_DELIM);
     },
     // Test unclosed string
     wrapFnExpectError(() => {
@@ -540,9 +527,7 @@ export function test() {
     }),
     // Test unexpected closing delimiter
     wrapFnExpectError(() => {
-      console.info("START");
       parse(")");
-      console.info("STOP");
     }),
     // Test needs a matching closing delimiter
     wrapFnExpectError(() => {
@@ -578,8 +563,6 @@ export function test() {
       `;
       
       const p: any = parse(code);
-      
-      console.info(p);
       
       assert(p.length === 3);
       assert(p[0].lexeme === "1");
