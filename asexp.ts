@@ -101,14 +101,19 @@ function createErrorMessage(code: string, index: number, message = "") {
  * 
  * @param code 
  * @param index 
+ * 
+ * @throws
  */
 function getLineAndColumnIndexInCode(code: string, index: number) {
+  // TODO: what should we do if index is out of bounds?
   let lineIndex = 0;
   let columnIndex = 0;
+
+  assert(0 <= index && index < code.length, "Out of bounds");
   
   // TODO: optimize this code at some point.
   
-  for (let i = 0; i < code.length; i += 1) {
+  for (let i = 0; i < index; i += 1) {
     const c = code[i];
     
     if (c === "\n") {
@@ -117,22 +122,89 @@ function getLineAndColumnIndexInCode(code: string, index: number) {
     } else {
       columnIndex += 1;
     }
-    
-    if (i === index) {
-      break;
-    }
   }
   
   return { lineIndex, columnIndex };
 }
 
-// TODO: add function that given code and index it will print out
-//       the code lines associated with that index and pointing
-//       to where the index lands.  This would be very useful when
-//       doing diagnostics with this module.
+function msgPointToCode(code: string, index: number) {
+  const { lineIndex: line_index, columnIndex: column_index } = getLineAndColumnIndexInCode(code, index);
+
+  // TODO: maybe this can be optimized.
+  const lines = code.split("\n");
+
+  const msg: string[] = [];
+
+  // The biggest number that is displayed in the gutter.
+  const max_number = line_index + 1;
+
+  // The size of the gutter is the same size as the number
+  // of characters in the largest number.
+  const gutter_size = `${max_number}`.length;
+
+
+  function gutter_number(k: number) {
+    assert(Number.isInteger(k));
+    assert(k >= 0 && k <= lines.length, `gutter_number: expected ${0} <= ${k} < ${lines.length}.`);
+
+    // TODO: smaller numbers must be left-padded with whitespace
+
+    const n = `${k}`.padStart(gutter_size, ' ');
+
+    return ` ${n} `;
+  }
+
+  function gutter_empty(k: number) {
+    assert(Number.isInteger(k));
+    assert(k >= 0 && k <= lines.length, `gutter_number: expected ${0} <= ${k} < ${lines.length}.`);
+
+    return ` ${" ".repeat(gutter_size)} `;
+  }
+
+  {
+    const l = lines;
+    
+    const li = line_index;
+    const ci = column_index;
+
+    const ge = gutter_empty;
+    const gn = gutter_number;
+
+    const p = (s: string) => {
+      msg.push(s);
+    };
+
+    // Check if index is in bounds w.r.t. lines.
+    const ib = (i: number) => {
+      if (!(Number.isInteger(i))) return false;
+      if (!(i >= 0 && i < lines.length)) return false;
+      
+      return true;
+    }
+
+    // whitespace / padding
+    const w = (n: number) => {
+      return " ".repeat(n);
+    };
+    
+    const __________ = true;
+
+    if (__________) p("");
+    if (__________) p(ge(0.0000) + "| " + w(ci));
+    if (ib(li - 1)) p(gn(li + 0) + "| " + l[li - 1]);
+    if (__________) p(gn(li + 1) + "| " + l[li + 0]);
+    if (__________) p(ge(li + 1) + ": " + w(ci) + "^");
+    if (ib(li + 1)) p(gn(li + 2) + "| " + l[li + 1]);
+    if (__________) p(ge(0.0000) + "| " + w(ci));
+    if (__________) p("");
+  }
+
+  return msg.join("\n");
+}
 
 export const utils = {
-  getLineAndColumnIndexInCode
+  getLineAndColumnIndexInCode,
+  msgPointToCode,
 };
 
 /**
@@ -429,21 +501,26 @@ export function parse(code: string, options: ParseOptions = {}): ParseNode[] {
   
   const tokens = tokenize(code, { whitespace: includeWhitespace, comment: includeComment });
   
-  // We use this stack when we're constructing the parse tree.
-  const stack: ParseNode[][] = [[]];
+  // Stack used when constructing the parse tree.  It constructs the parse
+  // tree in a depth-first way.  This stack keeps track of children, and the
+  // parent is simply an array.
+  const stack_list_children: ParseNode[][] = [[]];
   
-  const stack_2: ParseNode[] = [];
+  // Another stack used when constructing the parse tree.  This stack builds up
+  // the internal nodes, or the lists.
+  const stack_list_parent: ParseNode[] = [];
 
-  // To keep track of delimiters in case of error.
-  const list_delim_stack: ParseNodePrimitive[] = [];
+  // Keeps track of nesting and when nesting begins.  Used for error checking
+  // to make sure each opened parantheses has been closed.
+  const stack_nesting: number[] = [];
   
   for (const token of tokens) {
     if (token.value === "(") {
       
-      list_delim_stack.push(token);
-      stack.push([]);
+      stack_nesting.push(token.index);
+      stack_list_children.push([]);
       
-      stack_2.push({
+      stack_list_parent.push({
         type: PARSE_NODE_TYPE_LIST,
         value: [],
         
@@ -453,9 +530,13 @@ export function parse(code: string, options: ParseOptions = {}): ParseNode[] {
         columnIndex: token.columnIndex
       });
       
-      if (includeDelimiter) stack[stack.length - 1].push(token);
+      if (includeDelimiter) {
+        stack_list_children[stack_list_children.length - 1].push(token);
+      }
     } else if (token.value === ")") {
-      if (stack.length === 1) {
+      // Raise an syntax error if there are too many closing parentheses
+      // at this point in parsing.
+      if (stack_list_children.length === 1) {
         throw new SyntaxError(
           createErrorMessage(
             code,
@@ -465,40 +546,40 @@ export function parse(code: string, options: ParseOptions = {}): ParseNode[] {
         );
       }
       
-      if (includeDelimiter) stack[stack.length - 1].push(token);
+      if (includeDelimiter) {
+        stack_list_children[stack_list_children.length - 1].push(token);
+      }
       
-      list_delim_stack.pop();
-      const level = stack.pop();
+      stack_nesting.pop();
+      const children = stack_list_children.pop();
       
-      assert(typeof level !== "undefined");
+      assert(typeof children !== "undefined");
       
-      
-      
-      const parse_node = stack_2.pop();
+      const parse_node = stack_list_parent.pop();
       
       assert(typeof parse_node !== "undefined");
       
       parse_node.length = token.index - parse_node.index + 1;
-      parse_node.value = level;
+      parse_node.value = children;
       
-      stack[stack.length - 1].push(parse_node);
+      stack_list_children[stack_list_children.length - 1].push(parse_node);
     } else {
-      stack[stack.length - 1].push(token);
+      stack_list_children[stack_list_children.length - 1].push(token);
     }
   }
 
-  if (stack.length !== 1) {
-    const token = list_delim_stack[list_delim_stack.length - 1];
+  if (stack_list_children.length !== 1) {
+    const index = stack_nesting[stack_nesting.length - 1];
     throw new SyntaxError(
       createErrorMessage(
         code,
-        token.index,
+        index,
         `needs a matching closing delimiter`
       )
     );
   }
   
-  const parse_nodes = stack.pop();
+  const parse_nodes = stack_list_children.pop();
   
   assert(typeof parse_nodes !== "undefined");
 
