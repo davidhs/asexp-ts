@@ -58,46 +58,7 @@ function assert(condition: unknown, message = ""): asserts condition {
 }
 
 /**
- * Create error message
- * 
- * @param code Code.
- * @param index Index into `code`.
- * @param message Associated error message.
- */
-function createErrorMessage(code: string, index: number, message = "") {
-  // NOTE(Davíð): it's OK that this code is not performant.  This code doesn't run often,
-  //              and should cause an error if invoked.
-  
-  const { lineIndex, columnIndex } = getLineAndColumnIndexInCode(code, index);
-
-  // TODO: is "\n" the only symbol of new line?
-  const lines = code.split("\n");
-
-  const line = lines[lineIndex];
-
-  const msg: string[] = [];
-
-  const line_number = lineIndex + 1;
-
-  const sub_gutter_1 = `${line_number}`;
-  const gutter_1 = ` ${sub_gutter_1} | `;
-
-  const sub_gutter_2 = " ".repeat(sub_gutter_1.length);
-  const gutter_2 = ` ${sub_gutter_2} | `;
-
-  msg.push(`\n`);
-  msg.push(`\n`);
-  msg.push(`${gutter_1}${line}`);
-  msg.push(`\n`);
-  msg.push(`${gutter_2}${" ".repeat(columnIndex)}^`);
-  msg.push(`\n`);
-  msg.push(`${gutter_2}${" ".repeat(columnIndex)}'- ${message}`);
-  msg.push(`\n`);
-
-  return msg.join("");
-}
-
-/**
+ * Returns the line (row) and column index in the code from the index.
  * 
  * @param code 
  * @param index 
@@ -105,7 +66,6 @@ function createErrorMessage(code: string, index: number, message = "") {
  * @throws
  */
 function getLineAndColumnIndexInCode(code: string, index: number) {
-  // TODO: what should we do if index is out of bounds?
   let lineIndex = 0;
   let columnIndex = 0;
 
@@ -127,7 +87,16 @@ function getLineAndColumnIndexInCode(code: string, index: number) {
   return { lineIndex, columnIndex };
 }
 
-function msgPointToCode(code: string, index: number) {
+/**
+ * Creates a string that points index in code.  Used for creating error messages.
+ * 
+ * @param code 
+ * @param index 
+ * @returns 
+ * 
+ * @throws
+ */
+function msgPointToCode(code: string, index: number, message: undefined | string = undefined) {
   const { lineIndex: line_index, columnIndex: column_index } = getLineAndColumnIndexInCode(code, index);
 
   // TODO: maybe this can be optimized.
@@ -146,8 +115,6 @@ function msgPointToCode(code: string, index: number) {
   function gutter_number(k: number) {
     assert(Number.isInteger(k));
     assert(k >= 0 && k <= lines.length, `gutter_number: expected ${0} <= ${k} < ${lines.length}.`);
-
-    // TODO: smaller numbers must be left-padded with whitespace
 
     const n = `${k}`.padStart(gutter_size, ' ');
 
@@ -188,12 +155,15 @@ function msgPointToCode(code: string, index: number) {
     };
     
     const __________ = true;
+    const has_msg___ = typeof message === "string";
 
+    if (__________) p("");
     if (__________) p("");
     if (__________) p(ge(0.0000) + "| " + w(ci));
     if (ib(li - 1)) p(gn(li + 0) + "| " + l[li - 1]);
     if (__________) p(gn(li + 1) + "| " + l[li + 0]);
     if (__________) p(ge(li + 1) + ": " + w(ci) + "^");
+    if (has_msg___) p(ge(li + 1) + ": " + w(ci) + "'- " + message);
     if (ib(li + 1)) p(gn(li + 2) + "| " + l[li + 1]);
     if (__________) p(ge(0.0000) + "| " + w(ci));
     if (__________) p("");
@@ -469,7 +439,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): ParseNode
     if (state === STATE_STRING) {
       // If we're in a partial string, throw error.
       throw new SyntaxError(
-        createErrorMessage(
+        msgPointToCode(
           code,
           token_index,
           `unclosed string`
@@ -538,7 +508,7 @@ export function parse(code: string, options: ParseOptions = {}): ParseNode[] {
       // at this point in parsing.
       if (stack_list_children.length === 1) {
         throw new SyntaxError(
-          createErrorMessage(
+          msgPointToCode(
             code,
             token.index,
             `unexpected closing delimiter`
@@ -571,7 +541,7 @@ export function parse(code: string, options: ParseOptions = {}): ParseNode[] {
   if (stack_list_children.length !== 1) {
     const index = stack_nesting[stack_nesting.length - 1];
     throw new SyntaxError(
-      createErrorMessage(
+      msgPointToCode(
         code,
         index,
         `needs a matching closing delimiter`
