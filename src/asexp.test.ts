@@ -1,6 +1,7 @@
 // deno run test.ts
 
-import * as asexp from "./asexp.ts";
+import * as asexp from "./asexp";
+
 
 export function test() {
   function assert(condition: unknown, message = ""): asserts condition {

@@ -1,0 +1,12 @@
+{
+  "name": "asexp-ts",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "tsc && shx cp src/asexp.ts build/asexp.ts"
+  },
+  "devDependencies": {
+    "shx": "^0.3.4",
+    "ts-node": "^10.9.1",
+    "typescript": "^4.7.4"
+  }
+}
